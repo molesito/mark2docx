@@ -1,0 +1,15 @@
+Flask==3.0.3
+python-docx==1.1.2
+docxcompose==1.4.0
+Pillow==10.4.0
+
+markdown-it-py==3.0.0
+mdit-py-plugins==0.4.0
+
+latex2mathml==3.77.0
+pymathml2omml==0.4.2
+lxml==5.3.0
+
+matplotlib==3.9.2
+
+gunicorn==22.0.0
