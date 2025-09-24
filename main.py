@@ -16,7 +16,7 @@ from PIL import Image
 
 # Markdown parser
 from markdown_it import MarkdownIt
-from mdit_py_plugins import tasklists, table, anchors, sub, sup
+from mdit_py_plugins import tasklists, tables, anchors, sub, sup
 
 # LaTeX -> MathML
 from latex2mathml.converter import convert as latex_to_mathml
@@ -34,7 +34,7 @@ app = Flask(__name__)
 # -----------------------
 md = (
     MarkdownIt("commonmark", {"html": False})
-    .use(table.plugin)
+    .use(tables.plugin)
     .use(tasklists.tasklists_plugin, enabled=True, label=True)
     .use(anchors.plugin)
     .use(sub.plugin)
