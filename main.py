@@ -16,11 +16,7 @@ from PIL import Image
 
 # Markdown parser
 from markdown_it import MarkdownIt
-from mdit_py_plugins.tasklists import tasklists_plugin
-from mdit_py_plugins.table import table_plugin
-from mdit_py_plugins.anchors import anchors_plugin
-from mdit_py_plugins.sub import sub_plugin
-from mdit_py_plugins.sup import sup_plugin
+from mdit_py_plugins import tasklists, table, anchors, sub, sup
 
 # LaTeX -> MathML
 from latex2mathml.converter import convert as latex_to_mathml
@@ -38,11 +34,11 @@ app = Flask(__name__)
 # -----------------------
 md = (
     MarkdownIt("commonmark", {"html": False})
-    .use(table_plugin)
-    .use(tasklists_plugin, enabled=True, label=True)
-    .use(anchors_plugin)
-    .use(sub_plugin)
-    .use(sup_plugin)
+    .use(table.plugin)
+    .use(tasklists.tasklists_plugin, enabled=True, label=True)
+    .use(anchors.plugin)
+    .use(sub.plugin)
+    .use(sup.plugin)
 )
 
 MATH_INLINE_SPLIT_RE = re.compile(r"(\$\$.*?\$\$|\$.*?\$)", re.DOTALL)
