@@ -1,103 +1,52 @@
 import os
-import shutil
-import subprocess
 import tempfile
-from datetime import datetime
-from typing import Optional
-
-from fastapi import FastAPI, HTTPException, Response
+import subprocess
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="HTML to DOCX", version="1.0.0")
+app = FastAPI(title="MD→DOCX Converter")
 
 
-class HtmlPayload(BaseModel):
-    html: str
-    filename: Optional[str] = None  # opcional: nombre del archivo de salida
+class Payload(BaseModel):
+    markdown: str
+    filename: str = "document.docx"
 
 
-def _convert_html_to_docx(html_str: str, desired_name: Optional[str]) -> bytes:
-    if not html_str or not html_str.strip():
-        raise ValueError("El campo 'html' está vacío.")
+def md_to_docx(md_text: str, out_path: str):
+    if not md_text.strip():
+        raise ValueError("El contenido Markdown está vacío.")
 
-    # Carpeta temporal aislada por petición
-    with tempfile.TemporaryDirectory() as tmpdir:
-        html_path = os.path.join(tmpdir, "input.html")
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(html_str)
-
-        # LibreOffice generará un .docx con el mismo basename
-        # Ejemplo de comando:
-        # soffice --headless --convert-to docx --outdir /tmp/tmpabcd input.html
-        cmd = [
-            "soffice",
-            "--headless",
-            "--nologo",
-            "--nodefault",
-            "--nolockcheck",
-            "--norestore",
-            "--invisible",
-            "--convert-to",
-            "docx:MS Word 2007 XML",
-            "--outdir",
-            tmpdir,
-            html_path,
-        ]
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=tmpdir,
-        )
-
-        if proc.returncode != 0:
-            # Incluir algo de contexto de error
-            raise RuntimeError(
-                f"Error en LibreOffice (code {proc.returncode}). "
-                f"STDOUT: {proc.stdout}\nSTDERR: {proc.stderr}"
-            )
-
-        # Buscar el .docx generado
-        # Por defecto, será input.docx
-        out_path = os.path.join(tmpdir, "input.docx")
-        if not os.path.exists(out_path):
-            # En caso de cambios de nombre raros (no debería), buscar el primer .docx
-            candidates = [p for p in os.listdir(tmpdir) if p.lower().endswith(".docx")]
-            if not candidates:
-                raise RuntimeError("No se encontró el archivo DOCX de salida.")
-            out_path = os.path.join(tmpdir, candidates[0])
-
-        with open(out_path, "rb") as f:
-            data = f.read()
-
-        # Si el usuario quiere un nombre concreto, lo gestionamos en la cabecera, no aquí
-        return data
+    cmd = [
+        "pandoc",
+        "-f", "markdown+tex_math_dollars",
+        "-t", "docx",
+        "--standalone",
+        "--wrap=preserve",
+        "-o", out_path,
+        "-"
+    ]
+    subprocess.run(cmd, input=md_text.encode("utf-8"), check=True)
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat() + "Z"}
+@app.post("/convert")
+def convert(payload: Payload, background_tasks: BackgroundTasks):
+    # Archivo temporal de salida
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        out_path = tmp.name
 
-
-@app.post("/to-docx")
-def to_docx(payload: HtmlPayload):
     try:
-        data = _convert_html_to_docx(payload.html, payload.filename)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve)) from ve
-    except RuntimeError as re:
-        raise HTTPException(status_code(500), detail=str(re)) from re
+        md_to_docx(payload.markdown, out_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error inesperado: {e}") from e
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        raise HTTPException(status_code=400, detail=str(e))
 
-    # Nombre final sugerido
-    fname = payload.filename.strip() if payload.filename else "document.docx"
-    if not fname.lower().endswith(".docx"):
-        fname += ".docx"
+    # Limpiar después de enviar
+    background_tasks.add_task(lambda p: os.path.exists(p) and os.remove(p), out_path)
 
-    return Response(
-        content=data,
+    return FileResponse(
+        out_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        filename=payload.filename,
     )
