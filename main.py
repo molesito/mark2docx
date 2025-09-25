@@ -1,49 +1,103 @@
 import os
+import shutil
 import subprocess
-import uuid
-from pathlib import Path
-from flask import Flask, request, send_file, abort
+import tempfile
+from datetime import datetime
+from typing import Optional
 
-app = Flask(__name__)
-UPLOAD_DIR = Path("/tmp/uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+from fastapi import FastAPI, HTTPException, Response
+from pydantic import BaseModel
 
-@app.route("/")
-def home():
-    return "Servicio de conversión LaTeX → DOCX con ecuaciones Word. Sube tu .docx en /upload"
+app = FastAPI(title="HTML to DOCX", version="1.0.0")
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    file = request.files.get("file")
-    if not file or not file.filename.endswith(".docx"):
-        return abort(400, "Debes subir un archivo .docx")
 
-    uid = uuid.uuid4().hex
-    input_path = UPLOAD_DIR / f"{uid}.docx"
-    md_path = UPLOAD_DIR / f"{uid}.md"
-    output_path = UPLOAD_DIR / f"{uid}_out.docx"
+class HtmlPayload(BaseModel):
+    html: str
+    filename: Optional[str] = None  # opcional: nombre del archivo de salida
 
-    file.save(input_path)
 
+def _convert_html_to_docx(html_str: str, desired_name: Optional[str]) -> bytes:
+    if not html_str or not html_str.strip():
+        raise ValueError("El campo 'html' está vacío.")
+
+    # Carpeta temporal aislada por petición
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, "input.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_str)
+
+        # LibreOffice generará un .docx con el mismo basename
+        # Ejemplo de comando:
+        # soffice --headless --convert-to docx --outdir /tmp/tmpabcd input.html
+        cmd = [
+            "soffice",
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nolockcheck",
+            "--norestore",
+            "--invisible",
+            "--convert-to",
+            "docx:MS Word 2007 XML",
+            "--outdir",
+            tmpdir,
+            html_path,
+        ]
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=tmpdir,
+        )
+
+        if proc.returncode != 0:
+            # Incluir algo de contexto de error
+            raise RuntimeError(
+                f"Error en LibreOffice (code {proc.returncode}). "
+                f"STDOUT: {proc.stdout}\nSTDERR: {proc.stderr}"
+            )
+
+        # Buscar el .docx generado
+        # Por defecto, será input.docx
+        out_path = os.path.join(tmpdir, "input.docx")
+        if not os.path.exists(out_path):
+            # En caso de cambios de nombre raros (no debería), buscar el primer .docx
+            candidates = [p for p in os.listdir(tmpdir) if p.lower().endswith(".docx")]
+            if not candidates:
+                raise RuntimeError("No se encontró el archivo DOCX de salida.")
+            out_path = os.path.join(tmpdir, candidates[0])
+
+        with open(out_path, "rb") as f:
+            data = f.read()
+
+        # Si el usuario quiere un nombre concreto, lo gestionamos en la cabecera, no aquí
+        return data
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat() + "Z"}
+
+
+@app.post("/to-docx")
+def to_docx(payload: HtmlPayload):
     try:
-        # Paso 1: DOCX -> Markdown (para que pandoc reconozca $...$)
-        subprocess.run([
-            "pandoc", str(input_path),
-            "-f", "docx", "-t", "markdown",
-            "-o", str(md_path)
-        ], check=True)
+        data = _convert_html_to_docx(payload.html, payload.filename)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve)) from ve
+    except RuntimeError as re:
+        raise HTTPException(status_code(500), detail=str(re)) from re
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {e}") from e
 
-        # Paso 2: Markdown -> DOCX (pandoc convierte a OMML)
-        subprocess.run([
-            "pandoc", str(md_path),
-            "-f", "markdown", "-t", "docx",
-            "-o", str(output_path)
-        ], check=True)
+    # Nombre final sugerido
+    fname = payload.filename.strip() if payload.filename else "document.docx"
+    if not fname.lower().endswith(".docx"):
+        fname += ".docx"
 
-    except subprocess.CalledProcessError:
-        return abort(500, "Error al convertir con pandoc")
-
-    return send_file(output_path, as_attachment=True, download_name="resultado.docx")
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
