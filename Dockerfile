@@ -1,20 +1,21 @@
+# Imagen base con Python
 FROM python:3.11-slim
 
+# Instalar pandoc y dependencias
+RUN apt-get update && apt-get install -y pandoc && rm -rf /var/lib/apt/lists/*
+
+# Crear directorio de la app
 WORKDIR /app
 
-# Dependencias del sistema para lxml y pillow
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libxml2-dev libxslt1-dev gcc build-essential \
-    libjpeg62-turbo-dev zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
-
+# Copiar requirements e instalar
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copiar el código
 COPY . .
 
-# Flask + gunicorn
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+# Puerto para Render
+ENV PORT=5000
 
-CMD ["gunicorn", "-w", "2", "-k", "gthread", "--threads", "4", "--timeout", "90", "main:app", "--bind", "0.0.0.0:8000"]
+# Comando de arranque con Gunicorn
+CMD ["gunicorn", "-b", "0.0.0.0:5000", "main:app"]
