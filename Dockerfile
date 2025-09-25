@@ -18,4 +18,4 @@ COPY main.py .
 EXPOSE 8000
 
 # Render usa la variable de entorno $PORT
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app -b 0.0.0.0:${PORT:-8000}"]
